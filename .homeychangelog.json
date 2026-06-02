@@ -42,5 +42,9 @@
   "1.1.3": {
     "en": "Added a Send Debug To Developer option for detailed debugging and monitoring.",
     "nl": "Een Stuur debug naar ontwikkelaar-optie toegevoegd voor gedetailleerde debugging en monitoring."
+  },
+  "1.1.4": {
+    "en": "Bugfix: fixed an issue where the previous version did not run reliably on some systems.",
+    "nl": "Bugfix: een probleem opgelost waardoor de vorige versie op sommige systemen niet betrouwbaar draaide."
   }
 }

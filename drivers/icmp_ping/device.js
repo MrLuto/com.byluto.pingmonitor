@@ -7,8 +7,7 @@ const { spawn } = require('child_process');
 module.exports = class IcmpPingDevice extends Homey.Device {
 
   async onInit() {
-    this._wrapLogger();
-    this.log(`Ping device gestart: ${this.getName()}`);
+    this.debugLog(`Ping device gestart: ${this.getName()}`);
 
     this._interval = null;
     this._isPinging = false;
@@ -33,7 +32,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
   }
 
   async onAdded() {
-    this.log('Ping device toegevoegd');
+    this.debugLog('Ping device toegevoegd');
     await this.pingNow({ triggerFlows: false });
   }
 
@@ -52,7 +51,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
 
   async onDeleted() {
     this.stopPolling();
-    this.log('Ping device verwijderd');
+    this.debugLog('Ping device verwijderd');
   }
 
   isOnline() {
@@ -68,11 +67,11 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     this.stopPolling();
 
     const intervalSeconds = this._clampNumber(this.getSettings().interval, 30, 5, 3600);
-    this.log('[ping]', this.getHost() || '(geen host)', `polling gestart: elke ${intervalSeconds}s`);
+    this.debugLog('[ping]', this.getHost() || '(geen host)', `polling gestart: elke ${intervalSeconds}s`);
     // eslint-disable-next-line homey-app/global-timers
     this._interval = setInterval(() => {
-      this.log('[ping]', this.getHost() || '(geen host)', 'interval tick');
-      this.pingNow({ triggerFlows: true }).catch((error) => this.error(error));
+      this.debugLog('[ping]', this.getHost() || '(geen host)', 'interval tick');
+      this.pingNow({ triggerFlows: true }).catch((error) => this.debugError(error));
     }, intervalSeconds * 1000);
   }
 
@@ -80,7 +79,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     if (this._interval) {
       clearInterval(this._interval);
       this._interval = null;
-      this.log('[ping]', this.getHost() || '(geen host)', 'polling gestopt');
+      this.debugLog('[ping]', this.getHost() || '(geen host)', 'polling gestopt');
     }
   }
 
@@ -90,17 +89,17 @@ module.exports = class IcmpPingDevice extends Homey.Device {
       await this.setAvailable();
       await this.setWarning(this.homey.__('errors.no_host'));
       await this._applyOnlineState(false, triggerFlows);
-      this.log('[ping]', 'geen host ingesteld');
+      this.debugLog('[ping]', 'geen host ingesteld');
       return false;
     }
 
     if (this._isPinging) {
-      this.log('[ping]', host, 'skip: ping al bezig');
+      this.debugLog('[ping]', host, 'skip: ping al bezig');
       return this._online;
     }
 
     this._isPinging = true;
-    this.log('[ping]', host, 'start');
+    this.debugLog('[ping]', host, 'start');
 
     try {
       const timeoutMs = this._clampNumber(this.getSettings().timeout, 5000, 1000, 15000);
@@ -114,19 +113,19 @@ module.exports = class IcmpPingDevice extends Homey.Device {
         await this.setWarning(this.homey.__('errors.no_reply'));
       }
       await this._applyOnlineState(online, triggerFlows);
-      this.log('[ping]', host, `resultaat: ${online ? 'ONLINE' : 'OFFLINE'}`);
+      this.debugLog('[ping]', host, `resultaat: ${online ? 'ONLINE' : 'OFFLINE'}`);
       return online;
     } catch (error) {
-      this.error('Ping mislukt', error);
+      this.debugError('Ping mislukt', error);
       const reason = this._formatError(error);
       await this.setAvailable();
       await this.setWarning(`${this.homey.__('errors.ping_failed')}: ${reason}`.slice(0, 255));
       await this._applyOnlineState(false, triggerFlows);
-      this.error('[ping]', host, `fout: ${reason}`);
+      this.debugError('[ping]', host, `fout: ${reason}`);
       return false;
     } finally {
       this._isPinging = false;
-      this.log('[ping]', host, 'einde');
+      this.debugLog('[ping]', host, 'einde');
     }
   }
 
@@ -147,14 +146,14 @@ module.exports = class IcmpPingDevice extends Homey.Device {
         throw error;
       }
 
-      this.log('[ping]', host, `ICMP niet beschikbaar, fallback naar TCP:${tcpPort}`);
+      this.debugLog('[ping]', host, `ICMP niet beschikbaar, fallback naar TCP:${tcpPort}`);
       return this._probeTcpHost(host, tcpPort, timeoutMs);
     }
   }
 
   async _probeIcmpHost(host, timeoutMs) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      this.log('[ping]', host, `attempt ${attempt + 1}/2`);
+      this.debugLog('[ping]', host, `attempt ${attempt + 1}/2`);
       const online = await this._probeIcmpHostOnce(host, timeoutMs, attempt + 1);
       if (online) {
         return true;
@@ -175,7 +174,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
       } catch (error) {
         const isNotFound = error && (error.code === 'ENOENT' || String(error.message || '').includes('ENOENT'));
         if (isNotFound) {
-          this.log('[ping]', host, `attempt ${attempt}: command niet gevonden: ${candidate.command}`);
+          this.debugLog('[ping]', host, `attempt ${attempt}: command niet gevonden: ${candidate.command}`);
           continue;
         }
 
@@ -189,7 +188,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
   }
 
   async _probeTcpHost(host, port, timeoutMs) {
-    this.log('[ping]', host, `tcp probe start: port ${port}`);
+    this.debugLog('[ping]', host, `tcp probe start: port ${port}`);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const online = await this._probeTcpHostOnce(host, port, timeoutMs, attempt + 1);
@@ -216,18 +215,18 @@ module.exports = class IcmpPingDevice extends Homey.Device {
       socket.setTimeout(timeoutMs);
 
       socket.once('connect', () => {
-        this.log('[ping]', host, `tcp attempt ${attempt}: connect OK op ${port}`);
+        this.debugLog('[ping]', host, `tcp attempt ${attempt}: connect OK op ${port}`);
         finalize(true);
       });
 
       socket.once('timeout', () => {
-        this.log('[ping]', host, `tcp attempt ${attempt}: timeout ${timeoutMs}ms op ${port}`);
+        this.debugLog('[ping]', host, `tcp attempt ${attempt}: timeout ${timeoutMs}ms op ${port}`);
         finalize(false);
       });
 
       socket.once('error', (error) => {
         const code = error && error.code ? error.code : 'UNKNOWN';
-        this.log('[ping]', host, `tcp attempt ${attempt}: error ${code}`);
+        this.debugLog('[ping]', host, `tcp attempt ${attempt}: error ${code}`);
 
         if (code === 'ECONNREFUSED') {
           // Host is bereikbaar, poort is dicht.
@@ -239,7 +238,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
       });
 
       socket.connect(port, host);
-      this.log('[ping]', host, `tcp attempt ${attempt}: connect ${host}:${port}`);
+      this.debugLog('[ping]', host, `tcp attempt ${attempt}: connect ${host}:${port}`);
     });
   }
 
@@ -258,7 +257,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
 
   async _runPingProcess(host, timeoutMs, attempt, command, args) {
     return new Promise((resolve, reject) => {
-      this.log('[ping]', host, `attempt ${attempt}: exec ${command} ${args.join(' ')}`);
+      this.debugLog('[ping]', host, `attempt ${attempt}: exec ${command} ${args.join(' ')}`);
       const child = spawn(command, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         // eslint-disable-next-line prefer-object-spread
@@ -276,9 +275,9 @@ module.exports = class IcmpPingDevice extends Homey.Device {
         if (settled) return;
         settled = true;
         child.kill('SIGKILL');
-        this.log('[ping]', host, `attempt ${attempt}: timeout na ${timeoutMs}ms`);
-        if (stdout.trim()) this.log('[ping]', host, `attempt ${attempt}: stdout:\n${stdout.trim()}`);
-        if (stderr.trim()) this.log('[ping]', host, `attempt ${attempt}: stderr:\n${stderr.trim()}`);
+        this.debugLog('[ping]', host, `attempt ${attempt}: timeout na ${timeoutMs}ms`);
+        if (stdout.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stdout:\n${stdout.trim()}`);
+        if (stderr.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stderr:\n${stderr.trim()}`);
         resolve(false);
       }, timeoutMs);
 
@@ -298,7 +297,7 @@ module.exports = class IcmpPingDevice extends Homey.Device {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        this.error('[ping]', host, `attempt ${attempt}: spawn error (${command}): ${error.message || String(error)}`);
+        this.debugError('[ping]', host, `attempt ${attempt}: spawn error (${command}): ${error.message || String(error)}`);
         reject(error);
       });
 
@@ -306,9 +305,9 @@ module.exports = class IcmpPingDevice extends Homey.Device {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        this.log('[ping]', host, `attempt ${attempt}: close code=${code} signal=${signal || 'none'}`);
-        if (stdout.trim()) this.log('[ping]', host, `attempt ${attempt}: stdout:\n${stdout.trim()}`);
-        if (stderr.trim()) this.log('[ping]', host, `attempt ${attempt}: stderr:\n${stderr.trim()}`);
+        this.debugLog('[ping]', host, `attempt ${attempt}: close code=${code} signal=${signal || 'none'}`);
+        if (stdout.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stdout:\n${stdout.trim()}`);
+        if (stderr.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stderr:\n${stderr.trim()}`);
 
         if (code === 0) {
           resolve(true);
@@ -381,38 +380,26 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     return 'tcp';
   }
 
-  _wrapLogger() {
-    const app = this.homey.app;
-    if (!app || !app.debugLogger || this._loggerWrapped) {
-      return;
+  debugLog(...args) {
+    this.log(...args);
+    if (this.homey.app && this.homey.app.forwardDebug) {
+      this.homey.app.forwardDebug('info', `device:${this.getName()}`, {
+        deviceName: this.getName(),
+        host: this.getHost(),
+        args,
+      });
     }
+  }
 
-    const originalLog = this.log.bind(this);
-    const originalError = this.error.bind(this);
-
-    this.log = (...args) => {
-      originalLog(...args);
-      app.debugLogger.capture('info', `device:${this.getName()}`, [
-        {
-          deviceName: this.getName(),
-          host: this.getHost ? this.getHost() : '',
-          args,
-        },
-      ]);
-    };
-
-    this.error = (...args) => {
-      originalError(...args);
-      app.debugLogger.capture('error', `device:${this.getName()}`, [
-        {
-          deviceName: this.getName(),
-          host: this.getHost ? this.getHost() : '',
-          args,
-        },
-      ]);
-    };
-
-    this._loggerWrapped = true;
+  debugError(...args) {
+    this.error(...args);
+    if (this.homey.app && this.homey.app.forwardDebug) {
+      this.homey.app.forwardDebug('error', `device:${this.getName()}`, {
+        deviceName: this.getName(),
+        host: this.getHost(),
+        args,
+      });
+    }
   }
 
 };

@@ -13,24 +13,8 @@ module.exports = class HomeyPingApp extends Homey.App {
   async onInit() {
     this._ensureDebugCid();
     this.debugLogger = new DebugLogger(this.homey, this.log.bind(this), this.error.bind(this));
-    this._wrapLogger('app');
     this.homey.settings.on('set', this._onSettingSet.bind(this));
-    this.log('Homey Ping is gestart');
-  }
-
-  _wrapLogger(source) {
-    const originalLog = this.log.bind(this);
-    const originalError = this.error.bind(this);
-
-    this.log = (...args) => {
-      originalLog(...args);
-      this.debugLogger.capture('info', source, args);
-    };
-
-    this.error = (...args) => {
-      originalError(...args);
-      this.debugLogger.capture('error', source, args);
-    };
+    this.debugLog('app', 'Homey Ping is gestart');
   }
 
   _ensureDebugCid() {
@@ -62,6 +46,24 @@ module.exports = class HomeyPingApp extends Homey.App {
         cid: this.homey.settings.get(DEBUG_CID_SETTING_KEY),
       }], true);
     }
+  }
+
+  forwardDebug(level, source, ...args) {
+    if (!this.debugLogger) {
+      return;
+    }
+
+    this.debugLogger.capture(level, source, args);
+  }
+
+  debugLog(source, ...args) {
+    this.log(...args);
+    this.forwardDebug('info', source, ...args);
+  }
+
+  debugError(source, ...args) {
+    this.error(...args);
+    this.forwardDebug('error', source, ...args);
   }
 
 };

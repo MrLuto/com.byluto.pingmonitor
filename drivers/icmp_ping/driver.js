@@ -19,8 +19,7 @@ const HOSTNAME_LOOKUP_CONCURRENCY = 32;
 
 module.exports = class IcmpPingDriver extends Homey.Driver {
   async onInit() {
-    this._wrapLogger();
-    this.log('ICMP ping driver gestart');
+    this.debugLog('ICMP ping driver gestart');
 
     this._becameOnlineCard = this.homey.flow.getDeviceTriggerCard('became-online');
     this._becameOfflineCard = this.homey.flow.getDeviceTriggerCard('became-offline');
@@ -68,18 +67,18 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
 
     const scanTargets = this._buildScanTargets();
     if (scanTargets.length > 0) {
-      this.log(`[pair] discovery scan start (${scanTargets.length} hosts)`);
+      this.debugLog(`[pair] discovery scan start (${scanTargets.length} hosts)`);
       const scanHits = await this._scanSubnet(scanTargets);
       for (const ip of scanHits) {
         this._mergeDiscoveredEntry(discovered, { ip, source: 'tcp-scan' });
       }
     } else {
-      this.log('[pair] discovery scan overgeslagen: geen lokale subnetten gevonden');
+      this.debugLog('[pair] discovery scan overgeslagen: geen lokale subnetten gevonden');
     }
 
     await this._enrichHostnames(discovered);
     await this._collectArpEntries(discovered, { skipMacIfHostname: true });
-    this.log(`[pair] discovery scan klaar (${discovered.size} kandidaten)`);
+    this.debugLog(`[pair] discovery scan klaar (${discovered.size} kandidaten)`);
 
     const existingHosts = this._getExistingHosts();
     const results = Array.from(discovered.values())
@@ -103,7 +102,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
           this._mergeDiscoveredEntry(discovered, entry, options);
         }
       } catch (error) {
-        this.log('[pair] discovery parser fout:', error.message || String(error));
+        this.debugError('[pair] discovery parser fout:', error.message || String(error));
       }
     }
   }
@@ -308,13 +307,13 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
     }
 
     if (lines.length === 0) {
-      this.log('[pair] lokale IPv4 interfaces: geen');
+      this.debugLog('[pair] lokale IPv4 interfaces: geen');
       return;
     }
 
-    this.log('[pair] lokale IPv4 interfaces:');
+    this.debugLog('[pair] lokale IPv4 interfaces:');
     for (const line of lines) {
-      this.log(`[pair]   ${line}`);
+      this.debugLog(`[pair]   ${line}`);
     }
   }
 
@@ -329,7 +328,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
       else if (ip.startsWith('192.168.')) oneNineTwoCount += 1;
     }
 
-    this.log(
+    this.debugLog(
       '[pair] scan targets:',
       `total=${targets.size}`,
       `10.x=${tenCount}`,
@@ -576,7 +575,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
     const entries = Array.from(discovered.values()).filter((entry) => !entry.hostname && entry.ip);
     if (entries.length === 0) return;
 
-    this.log(`[pair] hostname lookup start (${entries.length} hosts)`);
+    this.debugLog(`[pair] hostname lookup start (${entries.length} hosts)`);
 
     let index = 0;
     const workers = Array.from({ length: HOSTNAME_LOOKUP_CONCURRENCY }).map(async () => {
@@ -592,7 +591,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
         const hostname = await this._resolveHostname(entry.ip);
         if (hostname) {
           entry.hostname = hostname;
-          this.log(`[pair] hostname ${entry.ip} -> ${hostname}`);
+          this.debugLog(`[pair] hostname ${entry.ip} -> ${hostname}`);
         }
       }
     });
@@ -655,25 +654,17 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
     return value;
   }
 
-  _wrapLogger() {
-    const app = this.homey.app;
-    if (!app || !app.debugLogger || this._loggerWrapped) {
-      return;
+  debugLog(...args) {
+    this.log(...args);
+    if (this.homey.app && this.homey.app.forwardDebug) {
+      this.homey.app.forwardDebug('info', 'driver:icmp_ping', ...args);
     }
+  }
 
-    const originalLog = this.log.bind(this);
-    const originalError = this.error.bind(this);
-
-    this.log = (...args) => {
-      originalLog(...args);
-      app.debugLogger.capture('info', 'driver:icmp_ping', args);
-    };
-
-    this.error = (...args) => {
-      originalError(...args);
-      app.debugLogger.capture('error', 'driver:icmp_ping', args);
-    };
-
-    this._loggerWrapped = true;
+  debugError(...args) {
+    this.error(...args);
+    if (this.homey.app && this.homey.app.forwardDebug) {
+      this.homey.app.forwardDebug('error', 'driver:icmp_ping', ...args);
+    }
   }
 };
