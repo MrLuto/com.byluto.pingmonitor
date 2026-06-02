@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 module.exports = class IcmpPingDevice extends Homey.Device {
 
   async onInit() {
+    this._wrapLogger();
     this.log(`Ping device gestart: ${this.getName()}`);
 
     this._interval = null;
@@ -378,6 +379,40 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     }
 
     return 'tcp';
+  }
+
+  _wrapLogger() {
+    const app = this.homey.app;
+    if (!app || !app.debugLogger || this._loggerWrapped) {
+      return;
+    }
+
+    const originalLog = this.log.bind(this);
+    const originalError = this.error.bind(this);
+
+    this.log = (...args) => {
+      originalLog(...args);
+      app.debugLogger.capture('info', `device:${this.getName()}`, [
+        {
+          deviceName: this.getName(),
+          host: this.getHost ? this.getHost() : '',
+          args,
+        },
+      ]);
+    };
+
+    this.error = (...args) => {
+      originalError(...args);
+      app.debugLogger.capture('error', `device:${this.getName()}`, [
+        {
+          deviceName: this.getName(),
+          host: this.getHost ? this.getHost() : '',
+          args,
+        },
+      ]);
+    };
+
+    this._loggerWrapped = true;
   }
 
 };

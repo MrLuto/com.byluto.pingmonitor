@@ -19,6 +19,7 @@ const HOSTNAME_LOOKUP_CONCURRENCY = 32;
 
 module.exports = class IcmpPingDriver extends Homey.Driver {
   async onInit() {
+    this._wrapLogger();
     this.log('ICMP ping driver gestart');
 
     this._becameOnlineCard = this.homey.flow.getDeviceTriggerCard('became-online');
@@ -652,5 +653,27 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
     value = value.replace(/\.localdomain$/i, '');
     value = value.replace(/\.local$/i, '');
     return value;
+  }
+
+  _wrapLogger() {
+    const app = this.homey.app;
+    if (!app || !app.debugLogger || this._loggerWrapped) {
+      return;
+    }
+
+    const originalLog = this.log.bind(this);
+    const originalError = this.error.bind(this);
+
+    this.log = (...args) => {
+      originalLog(...args);
+      app.debugLogger.capture('info', 'driver:icmp_ping', args);
+    };
+
+    this.error = (...args) => {
+      originalError(...args);
+      app.debugLogger.capture('error', 'driver:icmp_ping', args);
+    };
+
+    this._loggerWrapped = true;
   }
 };

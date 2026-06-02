@@ -1,6 +1,6 @@
 {
   "id": "com.byluto.pingmonitor",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "compatibility": ">=12.4.0",
   "sdk": 3,
   "runtime": "nodejs",
@@ -16,8 +16,8 @@
     "nl": "Volg de beschikbaarheid van netwerkapparaten en automatiseer acties als ze online of offline gaan."
   },
   "changelog": {
-    "en": "Set TCP as default probe mode, updated app ID, and refined metadata.",
-    "nl": "TCP als standaard controlemodus ingesteld, app-ID bijgewerkt en metadata verfijnd."
+    "en": "Added a Send Debug To Developer option for detailed debugging and monitoring.",
+    "nl": "Een Stuur debug naar ontwikkelaar-optie toegevoegd voor gedetailleerde debugging en monitoring."
   },
   "category": [
     "tools"
