@@ -2,38 +2,39 @@
 
 const Homey = require('homey');
 const net = require('net');
-const { spawn } = require('child_process');
 
 module.exports = class IcmpPingDevice extends Homey.Device {
 
   async onInit() {
-    this.debugLog(`Ping device gestart: ${this.getName()}`);
-
     this._interval = null;
     this._isPinging = false;
     this._online = false;
+    this.debugLog(`Ping device gestart: ${this.getName()}`);
 
-    if (!this.hasCapability('ping_status')) {
-      await this.addCapability('ping_status');
+    try {
+      await this._ensureCapabilities();
+
+      this.registerCapabilityListener('onoff', async () => {
+        await this.pingNow({ triggerFlows: true });
+        return this._online;
+      });
+
+      await this._safeSetAvailable();
+      this.startPolling();
+      await this.pingNow({ triggerFlows: false });
+    } catch (error) {
+      this.debugError('[init]', this.getName(), 'initialisatie mislukt', error);
+      await this._safeSetUnavailable(`Initialisatie mislukt: ${this._formatError(error)}`);
     }
-
-    if (this.hasCapability('alarm_generic')) {
-      await this.removeCapability('alarm_generic');
-    }
-
-    this.registerCapabilityListener('onoff', async () => {
-      await this.pingNow({ triggerFlows: true });
-      return this._online;
-    });
-
-    await this.setAvailable();
-    this.startPolling();
-    await this.pingNow({ triggerFlows: false });
   }
 
   async onAdded() {
     this.debugLog('Ping device toegevoegd');
-    await this.pingNow({ triggerFlows: false });
+    try {
+      await this.pingNow({ triggerFlows: false });
+    } catch (error) {
+      this.debugError('[device]', this.getName(), 'eerste ping na toevoegen mislukt', error);
+    }
   }
 
   async onSettings({ changedKeys }) {
@@ -41,11 +42,14 @@ module.exports = class IcmpPingDevice extends Homey.Device {
       changedKeys.includes('host')
       || changedKeys.includes('interval')
       || changedKeys.includes('timeout')
-      || changedKeys.includes('probe_mode')
       || changedKeys.includes('tcp_port')
     ) {
       this.startPolling();
-      await this.pingNow({ triggerFlows: false });
+      try {
+        await this.pingNow({ triggerFlows: false });
+      } catch (error) {
+        this.debugError('[settings]', this.getName(), 'ping na settingswijziging mislukt', error);
+      }
     }
   }
 
@@ -86,8 +90,8 @@ module.exports = class IcmpPingDevice extends Homey.Device {
   async pingNow({ triggerFlows = true } = {}) {
     const host = this.getHost();
     if (!host) {
-      await this.setAvailable();
-      await this.setWarning(this.homey.__('errors.no_host'));
+      await this._safeSetAvailable();
+      await this._safeSetWarning(this.homey.__('errors.no_host'));
       await this._applyOnlineState(false, triggerFlows);
       this.debugLog('[ping]', 'geen host ingesteld');
       return false;
@@ -102,15 +106,14 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     this.debugLog('[ping]', host, 'start');
 
     try {
-      const timeoutMs = this._clampNumber(this.getSettings().timeout, 5000, 1000, 15000);
-      const probeMode = this._getProbeMode();
+      const timeoutMs = this._clampNumber(this.getSettings().timeout, 2000, 500, 10000);
       const tcpPort = this._clampNumber(this.getSettings().tcp_port, 443, 1, 65535);
-      const online = await this._probeHost(host, timeoutMs, probeMode, tcpPort);
-      await this.setAvailable();
+      const online = await this._probeTcpHost(host, tcpPort, timeoutMs);
+      await this._safeSetAvailable();
       if (online) {
-        await this.unsetWarning();
+        await this._safeUnsetWarning();
       } else {
-        await this.setWarning(this.homey.__('errors.no_reply'));
+        await this._safeSetWarning(this.homey.__('errors.no_reply'));
       }
       await this._applyOnlineState(online, triggerFlows);
       this.debugLog('[ping]', host, `resultaat: ${online ? 'ONLINE' : 'OFFLINE'}`);
@@ -118,8 +121,8 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     } catch (error) {
       this.debugError('Ping mislukt', error);
       const reason = this._formatError(error);
-      await this.setAvailable();
-      await this.setWarning(`${this.homey.__('errors.ping_failed')}: ${reason}`.slice(0, 255));
+      await this._safeSetAvailable();
+      await this._safeSetWarning(`${this.homey.__('errors.ping_failed')}: ${reason}`.slice(0, 255));
       await this._applyOnlineState(false, triggerFlows);
       this.debugError('[ping]', host, `fout: ${reason}`);
       return false;
@@ -127,64 +130,6 @@ module.exports = class IcmpPingDevice extends Homey.Device {
       this._isPinging = false;
       this.debugLog('[ping]', host, 'einde');
     }
-  }
-
-  async _probeHost(host, timeoutMs, probeMode, tcpPort) {
-    if (probeMode === 'tcp') {
-      return this._probeTcpHost(host, tcpPort, timeoutMs);
-    }
-
-    if (probeMode === 'icmp') {
-      return this._probeIcmpHost(host, timeoutMs);
-    }
-
-    try {
-      return await this._probeIcmpHost(host, timeoutMs);
-    } catch (error) {
-      const isIcmpUnavailable = error && (error.code === 'ENOENT' || String(error.message || '').includes('ENOENT'));
-      if (!isIcmpUnavailable) {
-        throw error;
-      }
-
-      this.debugLog('[ping]', host, `ICMP niet beschikbaar, fallback naar TCP:${tcpPort}`);
-      return this._probeTcpHost(host, tcpPort, timeoutMs);
-    }
-  }
-
-  async _probeIcmpHost(host, timeoutMs) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      this.debugLog('[ping]', host, `attempt ${attempt + 1}/2`);
-      const online = await this._probeIcmpHostOnce(host, timeoutMs, attempt + 1);
-      if (online) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  async _probeIcmpHostOnce(host, timeoutMs, attempt) {
-    const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
-    const pingArgs = ['-n', '-c', '1', '-W', String(timeoutSec), host];
-    const candidates = this._getPingCandidates(pingArgs);
-
-    for (const candidate of candidates) {
-      try {
-        return await this._runPingProcess(host, timeoutMs, attempt, candidate.command, candidate.args);
-      } catch (error) {
-        const isNotFound = error && (error.code === 'ENOENT' || String(error.message || '').includes('ENOENT'));
-        if (isNotFound) {
-          this.debugLog('[ping]', host, `attempt ${attempt}: command niet gevonden: ${candidate.command}`);
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    const missingErr = new Error('Geen ping binary gevonden');
-    missingErr.code = 'ENOENT';
-    throw missingErr;
   }
 
   async _probeTcpHost(host, port, timeoutMs) {
@@ -242,106 +187,12 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     });
   }
 
-  _getPingCandidates(pingArgs) {
-    return [
-      { command: 'ping', args: pingArgs },
-      { command: '/bin/ping', args: pingArgs },
-      { command: '/usr/bin/ping', args: pingArgs },
-      { command: '/sbin/ping', args: pingArgs },
-      { command: '/system/bin/ping', args: pingArgs },
-      { command: 'busybox', args: ['ping', ...pingArgs] },
-      { command: '/bin/busybox', args: ['ping', ...pingArgs] },
-      { command: '/usr/bin/busybox', args: ['ping', ...pingArgs] },
-    ];
-  }
-
-  async _runPingProcess(host, timeoutMs, attempt, command, args) {
-    return new Promise((resolve, reject) => {
-      this.debugLog('[ping]', host, `attempt ${attempt}: exec ${command} ${args.join(' ')}`);
-      const child = spawn(command, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        // eslint-disable-next-line prefer-object-spread
-        env: Object.assign({}, process.env, {
-          PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-        }),
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-
-      // eslint-disable-next-line homey-app/global-timers
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        child.kill('SIGKILL');
-        this.debugLog('[ping]', host, `attempt ${attempt}: timeout na ${timeoutMs}ms`);
-        if (stdout.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stdout:\n${stdout.trim()}`);
-        if (stderr.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stderr:\n${stderr.trim()}`);
-        resolve(false);
-      }, timeoutMs);
-
-      if (child.stdout) {
-        child.stdout.on('data', (chunk) => {
-          stdout += String(chunk);
-        });
-      }
-
-      if (child.stderr) {
-        child.stderr.on('data', (chunk) => {
-          stderr += String(chunk);
-        });
-      }
-
-      child.on('error', (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        this.debugError('[ping]', host, `attempt ${attempt}: spawn error (${command}): ${error.message || String(error)}`);
-        reject(error);
-      });
-
-      child.on('close', (code, signal) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        this.debugLog('[ping]', host, `attempt ${attempt}: close code=${code} signal=${signal || 'none'}`);
-        if (stdout.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stdout:\n${stdout.trim()}`);
-        if (stderr.trim()) this.debugLog('[ping]', host, `attempt ${attempt}: stderr:\n${stderr.trim()}`);
-
-        if (code === 0) {
-          resolve(true);
-          return;
-        }
-
-        const outputLower = `${stdout}\n${stderr}`.toLowerCase();
-        if (outputLower.includes('1 received') || outputLower.includes('bytes from')) {
-          resolve(true);
-          return;
-        }
-
-        if (
-          outputLower.includes('operation not permitted')
-          || outputLower.includes('permission denied')
-          || outputLower.includes('not found')
-          || outputLower.includes('unknown host')
-          || outputLower.includes('bad address')
-        ) {
-          reject(new Error(stderr.trim() || stdout.trim() || `ping exited with code ${code}`));
-          return;
-        }
-
-        resolve(false);
-      });
-    });
-  }
-
   async _applyOnlineState(online, triggerFlows) {
     const changed = this._online !== online;
     this._online = online;
 
-    await this.setCapabilityValue('onoff', online);
-    await this.setCapabilityValue('ping_status', online ? 'online' : 'offline');
+    await this._safeSetCapabilityValue('onoff', online);
+    await this._safeSetCapabilityValue('ping_status', online ? 'online' : 'offline');
 
     if (!changed || !triggerFlows) {
       return;
@@ -371,13 +222,67 @@ module.exports = class IcmpPingDevice extends Homey.Device {
     return this.homey.__('errors.unknown_error');
   }
 
-  _getProbeMode() {
-    const mode = String(this.getSettings().probe_mode || 'tcp').toLowerCase();
-    if (mode === 'icmp' || mode === 'tcp') {
-      return mode;
+  async _ensureCapabilities() {
+    if (!this.hasCapability('ping_status')) {
+      try {
+        await this.addCapability('ping_status');
+      } catch (error) {
+        this.debugError('[capability]', this.getName(), 'kon ping_status niet toevoegen', error);
+      }
     }
 
-    return 'tcp';
+    if (this.hasCapability('alarm_generic')) {
+      try {
+        await this.removeCapability('alarm_generic');
+      } catch (error) {
+        this.debugError('[capability]', this.getName(), 'kon alarm_generic niet verwijderen', error);
+      }
+    }
+  }
+
+  async _safeSetAvailable() {
+    try {
+      await this.setAvailable();
+    } catch (error) {
+      this.debugError('[device]', this.getName(), 'setAvailable mislukt', error);
+    }
+  }
+
+  async _safeSetUnavailable(message) {
+    try {
+      await this.setUnavailable(String(message || this.homey.__('errors.unknown_error')).slice(0, 255));
+    } catch (error) {
+      this.debugError('[device]', this.getName(), 'setUnavailable mislukt', error);
+    }
+  }
+
+  async _safeSetWarning(message) {
+    try {
+      await this.setWarning(String(message || '').slice(0, 255));
+    } catch (error) {
+      this.debugError('[device]', this.getName(), 'setWarning mislukt', error);
+    }
+  }
+
+  async _safeUnsetWarning() {
+    try {
+      await this.unsetWarning();
+    } catch (error) {
+      this.debugError('[device]', this.getName(), 'unsetWarning mislukt', error);
+    }
+  }
+
+  async _safeSetCapabilityValue(capabilityId, value) {
+    if (!this.hasCapability(capabilityId)) {
+      this.debugError('[capability]', this.getName(), `capability ontbreekt: ${capabilityId}`);
+      return;
+    }
+
+    try {
+      await this.setCapabilityValue(capabilityId, value);
+    } catch (error) {
+      this.debugError('[capability]', this.getName(), `setCapabilityValue mislukt: ${capabilityId}`, error);
+    }
   }
 
   debugLog(...args) {

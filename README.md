@@ -2,16 +2,12 @@
 
 Ping devices from Homey and use the online/offline status in Flows.
 
-This app started as ICMP-based monitoring.  
-Because some Homey environments do not include a `ping` binary, the app supports three probe modes:
-- `AUTO (ICMP -> TCP fallback)`
-- `ICMP only`
-- `TCP only`
+This app uses TCP-based monitoring because ICMP probing is not reliably supported on Homey runtimes.
 
 ## Features
 
 - Add one or more ping targets manually (host/IP).
-- Periodic probing with configurable interval and timeout.
+- Periodic TCP probing with configurable interval and timeout.
 - Manual probe via capability (`Ping nu` / `Ping now`).
 - Status capability with clear values: `Online` / `Offline`.
 - Flow cards for automation:
@@ -26,11 +22,7 @@ Because some Homey environments do not include a `ping` binary, the app supports
 - `Host or IP`: target to monitor (for example `192.168.1.20` or `nas.local`)
 - `Ping interval (seconds)`: how often to probe
 - `Ping timeout (ms)`: timeout per attempt
-- `Probe mode`:
-  - `Auto (ICMP -> TCP)`: tries ICMP first, falls back to TCP when ICMP is unavailable
-  - `ICMP only`: strict ICMP mode
-  - `TCP only`: connection check on configured port
-- `TCP fallback port`: port used for TCP mode/fallback (default `443`)
+- `TCP port`: port used for the reachability check (default `443`)
 
 ## Flow Usage
 
@@ -92,11 +84,11 @@ Publish automation:
 - Pushing a tag like `v1.0.1` triggers `.github/workflows/homey-app-publish.yml` automatically.
 - You can also run publish manually via `workflow_dispatch`.
   
-## Notes About ICMP
+## Notes About Probing
 
-- If Homey runtime has no `ping` binary, ICMP-only mode cannot work.
-- In that case use `AUTO` or `TCP only`.
-- For strict ICMP, the target device must reply to echo requests (firewall/network policy may block this).
+- Reachability is determined by a TCP connection attempt to the configured port.
+- A refused connection still counts as reachable, because the host responded.
+- Choose a port that is likely to answer on your device, such as `443`, `80`, or `22`.
 
 ## License
 

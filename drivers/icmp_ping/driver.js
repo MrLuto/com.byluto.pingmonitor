@@ -2,24 +2,27 @@
 
 const Homey = require('homey');
 const os = require('os');
-const dns = require('dns').promises;
+const dns = require('dns');
 const fs = require('fs/promises');
 const net = require('net');
 const { spawn } = require('child_process');
+const { promisify } = require('util');
+
+const reverseDns = promisify(dns.reverse);
 
 const DEFAULT_INTERVAL = 30;
 const DEFAULT_TIMEOUT = 2000;
 const DEFAULT_TCP_PORT = 443;
-const DISCOVERY_TCP_TIMEOUT_MS = 220;
-const DISCOVERY_CONCURRENCY = 256;
-const DISCOVERY_MAX_HOSTS = 70000;
+const DISCOVERY_TCP_TIMEOUT_MS = 250;
+const DISCOVERY_CONCURRENCY = 64;
+const DISCOVERY_MAX_HOSTS = 2048;
 const DISCOVERY_SCAN_PORTS = [443];
 const HOSTNAME_LOOKUP_TIMEOUT_MS = 700;
 const HOSTNAME_LOOKUP_CONCURRENCY = 32;
 
 module.exports = class IcmpPingDriver extends Homey.Driver {
   async onInit() {
-    this.debugLog('ICMP ping driver gestart');
+    this.debugLog('TCP ping driver gestart');
 
     this._becameOnlineCard = this.homey.flow.getDeviceTriggerCard('became-online');
     this._becameOfflineCard = this.homey.flow.getDeviceTriggerCard('became-offline');
@@ -61,24 +64,28 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
   async _discoverNetworkDevices() {
     const discovered = new Map();
 
-    this._logLocalNetworkContext();
+    try {
+      this._logLocalNetworkContext();
 
-    await this._collectArpEntries(discovered);
+      await this._collectArpEntries(discovered);
 
-    const scanTargets = this._buildScanTargets();
-    if (scanTargets.length > 0) {
-      this.debugLog(`[pair] discovery scan start (${scanTargets.length} hosts)`);
-      const scanHits = await this._scanSubnet(scanTargets);
-      for (const ip of scanHits) {
-        this._mergeDiscoveredEntry(discovered, { ip, source: 'tcp-scan' });
+      const scanTargets = this._buildScanTargets();
+      if (scanTargets.length > 0) {
+        this.debugLog(`[pair] discovery scan start (${scanTargets.length} hosts, concurrency ${DISCOVERY_CONCURRENCY})`);
+        const scanHits = await this._scanSubnet(scanTargets);
+        for (const ip of scanHits) {
+          this._mergeDiscoveredEntry(discovered, { ip, source: 'tcp-scan' });
+        }
+      } else {
+        this.debugLog('[pair] discovery scan overgeslagen: geen lokale subnetten gevonden');
       }
-    } else {
-      this.debugLog('[pair] discovery scan overgeslagen: geen lokale subnetten gevonden');
-    }
 
-    await this._enrichHostnames(discovered);
-    await this._collectArpEntries(discovered, { skipMacIfHostname: true });
-    this.debugLog(`[pair] discovery scan klaar (${discovered.size} kandidaten)`);
+      await this._enrichHostnames(discovered);
+      await this._collectArpEntries(discovered, { skipMacIfHostname: true });
+      this.debugLog(`[pair] discovery scan klaar (${discovered.size} kandidaten)`);
+    } catch (error) {
+      this.debugError('[pair] discovery scan mislukt:', error.message || String(error));
+    }
 
     const existingHosts = this._getExistingHosts();
     const results = Array.from(discovered.values())
@@ -277,6 +284,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
         for (const ip of subnetTargets) {
           targets.add(ip);
           if (targets.size >= DISCOVERY_MAX_HOSTS) {
+            this.debugLog(`[pair] discovery targetlimiet bereikt (${DISCOVERY_MAX_HOSTS} hosts)`);
             return Array.from(targets);
           }
         }
@@ -333,7 +341,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
       `total=${targets.size}`,
       `10.x=${tenCount}`,
       `172.x=${oneSevenTwoCount}`,
-      `192.168.x=${oneNineTwoCount}`
+      `192.168.x=${oneNineTwoCount}`,
     );
   }
 
@@ -374,7 +382,8 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
   async _scanSubnet(targetIps) {
     const hitSet = new Set();
     let index = 0;
-    const workers = Array.from({ length: DISCOVERY_CONCURRENCY }).map(async () => {
+    const workerCount = Math.min(DISCOVERY_CONCURRENCY, targetIps.length || 1);
+    const workers = Array.from({ length: workerCount }).map(async () => {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const currentIndex = index;
@@ -384,7 +393,12 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
         }
 
         const ip = targetIps[currentIndex];
-        const reachable = await this._touchHost(ip);
+        let reachable = false;
+        try {
+          reachable = await this._touchHost(ip);
+        } catch (error) {
+          this.debugError('[pair] probe fout:', ip, error.message || String(error));
+        }
         if (reachable) {
           hitSet.add(ip);
         }
@@ -472,7 +486,6 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
           host,
           interval: DEFAULT_INTERVAL,
           timeout: DEFAULT_TIMEOUT,
-          probe_mode: 'tcp',
           tcp_port: DEFAULT_TCP_PORT,
         },
       },
@@ -481,7 +494,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
 
   _mergeDiscoveredEntry(discovered, entry, options = {}) {
     if (!entry || !this._isIpv4(entry.ip)) return;
-    const ip = entry.ip;
+    const { ip } = entry;
     const skipMacIfHostname = Boolean(options.skipMacIfHostname);
     const existing = discovered.get(ip) || {
       ip,
@@ -601,7 +614,7 @@ module.exports = class IcmpPingDriver extends Homey.Driver {
 
   async _resolveHostname(ip) {
     try {
-      const hostnames = await this._withTimeout(dns.reverse(ip), HOSTNAME_LOOKUP_TIMEOUT_MS);
+      const hostnames = await this._withTimeout(reverseDns(ip), HOSTNAME_LOOKUP_TIMEOUT_MS);
       if (!Array.isArray(hostnames) || hostnames.length === 0) {
         return '';
       }

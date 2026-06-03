@@ -1,7 +1,7 @@
 {
   "_comment": "This file is generated. Please edit .homeycompose/app.json instead.",
   "id": "com.byluto.pingmonitor",
-  "version": "1.1.4",
+  "version": "1.1.6",
   "compatibility": ">=12.4.0",
   "sdk": 3,
   "runtime": "nodejs",
@@ -17,8 +17,8 @@
     "nl": "Volg de beschikbaarheid van netwerkapparaten en automatiseer acties als ze online of offline gaan."
   },
   "changelog": {
-    "en": "Bugfix: fixed an issue where the previous version did not run reliably on some systems.",
-    "nl": "Bugfix: een probleem opgelost waardoor de vorige versie op sommige systemen niet betrouwbaar draaide."
+    "en": "Crash fix release: fixes app crashes reported by users, improves discovery stability, and removes unsupported ICMP probing in favor of TCP-only monitoring.",
+    "nl": "Crashfix-release: lost app-crashes op die door gebruikers zijn gemeld, verbetert de stabiliteit van apparaatherkenning en verwijdert niet-ondersteunde ICMP-controles ten gunste van alleen TCP-monitoring."
   },
   "category": [
     "tools"
@@ -209,51 +209,15 @@
           }
         },
         {
-          "id": "probe_mode",
-          "type": "dropdown",
-          "label": {
-            "en": "Probe mode",
-            "nl": "Controlemodus"
-          },
-          "hint": {
-            "en": "Select probe mode. TCP only is the default.",
-            "nl": "Selecteer de controlemodus. Alleen TCP is standaard."
-          },
-          "value": "tcp",
-          "values": [
-            {
-              "id": "tcp",
-              "label": {
-                "en": "TCP only",
-                "nl": "Alleen TCP"
-              }
-            },
-            {
-              "id": "auto",
-              "label": {
-                "en": "Auto (ICMP -> TCP)",
-                "nl": "Auto (ICMP -> TCP)"
-              }
-            },
-            {
-              "id": "icmp",
-              "label": {
-                "en": "ICMP only",
-                "nl": "Alleen ICMP"
-              }
-            }
-          ]
-        },
-        {
           "id": "tcp_port",
           "type": "number",
           "label": {
-            "en": "TCP fallback port",
-            "nl": "TCP fallback-poort"
+            "en": "TCP port",
+            "nl": "TCP-poort"
           },
           "hint": {
-            "en": "Used for TCP mode and AUTO fallback. Example: 443, 80, 22",
-            "nl": "Gebruikt voor TCP-modus en AUTO fallback. Bijvoorbeeld: 443, 80, 22"
+            "en": "TCP port used to check whether the device is reachable. Example: 443, 80, 22",
+            "nl": "TCP-poort die wordt gebruikt om te controleren of het apparaat bereikbaar is. Bijvoorbeeld: 443, 80, 22"
           },
           "value": 443,
           "attr": {
